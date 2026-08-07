@@ -2,7 +2,7 @@
 """exactory-predict: deterministic steps of the exactory verifier.
 
 Two commands:
-  cohort   - fetch a paper's arXiv metadata and freeze the cohort definition
+  cohort   - read a paper's source metadata and freeze the cohort definition
   compose  - turn a stated prediction into a valid review payload
 
 The model decides the numbers. This tool does the arithmetic and the JSON, so the
@@ -20,7 +20,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 _ARXIV_API_URL = "http://export.arxiv.org/api/query"
+_ZENODO_API_URL = "https://zenodo.org/api/records"
 _TIMEOUT_SECONDS = 30
+_USER_AGENT = "exactory-verifier/0.3.0"
 
 # v1 provisional measurement ages (design 2026-08-06 §5). Frozen into every payload,
 # so a later per-field refinement changes future predictions only.
@@ -53,10 +55,11 @@ def _compute_quarter_window(published: str) -> tuple[str, str]:
     )
 
 
-def _run_cohort(args: argparse.Namespace) -> None:
-    query = urllib.parse.urlencode({"id_list": args.arxiv_id})
+def _read_arxiv_cohort_inputs(arxiv_id: str) -> tuple[str, str]:
+    """Return the paper's primary category and publication date, both from arXiv."""
+    query = urllib.parse.urlencode({"id_list": arxiv_id})
     request = urllib.request.Request(
-        f"{_ARXIV_API_URL}?{query}", headers={"User-Agent": "exactory-verifier/0.2.0"}
+        f"{_ARXIV_API_URL}?{query}", headers={"User-Agent": _USER_AGENT}
     )
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
@@ -68,13 +71,50 @@ def _run_cohort(args: argparse.Namespace) -> None:
     category = None if entry is None else entry.find("arxiv:primary_category", _ATOM_NS)
     published = None if entry is None else entry.findtext("atom:published", None, _ATOM_NS)
     if entry is None or category is None or published is None:
-        _exit_with_error(f"The arXiv API returned no usable entry for id {args.arxiv_id}.")
+        _exit_with_error(f"The arXiv API returned no usable entry for id {arxiv_id}.")
+
+    return category.get("term"), published
+
+
+def _read_zenodo_published_date(record_id: str) -> str:
+    """Return the record's publication date. Zenodo carries no field classification."""
+    request = urllib.request.Request(
+        f"{_ZENODO_API_URL}/{record_id}", headers={"User-Agent": _USER_AGENT}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+            record = json.load(response)
+    except OSError as error:
+        _exit_with_error(f"The client could not reach the Zenodo API. Cause: {error}")
+
+    published = record.get("metadata", {}).get("publication_date")
+    if not published:
+        _exit_with_error(f"The Zenodo record {record_id} carries no publication date.")
+    return published
+
+
+def _run_cohort(args: argparse.Namespace) -> None:
+    # A paper is ranked against the canonical corpus of its field, whatever source it was
+    # submitted from (design 2026-08-06 §4). arXiv states the field itself. Zenodo does
+    # not, so for a Zenodo paper the verifier states the corpus and the category.
+    if args.arxiv_id:
+        category, published = _read_arxiv_cohort_inputs(args.arxiv_id)
+        corpus = args.corpus or "arxiv"
+        category = args.category or category
+    else:
+        if not (args.corpus and args.category):
+            _exit_with_error(
+                "A Zenodo paper needs --corpus and --category:"
+                " Zenodo records carry no field classification."
+            )
+        corpus, category = args.corpus, args.category
+        published = _read_zenodo_published_date(args.zenodo_id)
 
     window_start, window_end = _compute_quarter_window(published)
     json.dump(
         {
-            "corpus": "arxiv",
-            "primaryCategory": category.get("term"),
+            "corpus": corpus,
+            "primaryCategory": category,
             "windowStart": window_start,
             "windowEnd": window_end,
             "initialAgeMonths": _INITIAL_AGE_MONTHS,
@@ -157,9 +197,21 @@ def _build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     cohort = commands.add_parser(
-        "cohort", help="Freeze the cohort definition from arXiv metadata."
+        "cohort", help="Freeze the cohort definition from the paper's source metadata."
     )
-    cohort.add_argument("--arxiv-id", required=True, help="For example 2301.00001.")
+    source = cohort.add_mutually_exclusive_group(required=True)
+    source.add_argument("--arxiv-id", help="For example 2301.00001.")
+    source.add_argument("--zenodo-id", help="A Zenodo record id, for example 21381192.")
+    cohort.add_argument(
+        "--corpus",
+        help="The corpus the percentile is stated against, for example arxiv."
+        " Required for a Zenodo paper.",
+    )
+    cohort.add_argument(
+        "--category",
+        help="The field the paper is ranked within, for example cs.MA."
+        " Required for a Zenodo paper.",
+    )
     cohort.set_defaults(handler=_run_cohort)
 
     compose = commands.add_parser("compose", help="Build the review payload file.")

@@ -29,7 +29,7 @@ export EXACTORY_API_KEY=<your key>
 
 > Work an exactory verification task.
 
-The agent lists open tasks, reads the paper from arXiv at its pinned version,
+The agent lists open tasks, reads the paper from its source at the pinned version,
 researches the field, and submits a prediction:
 
 - **initial impact**: the cohort percentile at the initial measurement age.
@@ -37,9 +37,10 @@ researches the field, and submits a prediction:
   that rides a trend and fades has a negative shift.
 
 Both are distributions. The width is the verifier's confidence; there is no separate
-confidence score. The cohort definition (arXiv primary category, time window,
-measurement ages) is frozen into every payload, so each prediction stays scoreable
-after conventions change.
+confidence score. The cohort definition (corpus, field, time window, measurement ages)
+is frozen into every payload, so each prediction stays scoreable after conventions
+change. A paper is ranked against the corpus where its field canonically publishes,
+whatever source it came from.
 
 ## Security
 
