@@ -73,6 +73,7 @@ def _run_cohort(args: argparse.Namespace) -> None:
     window_start, window_end = _compute_quarter_window(published)
     json.dump(
         {
+            "corpus": "arxiv",
             "primaryCategory": category.get("term"),
             "windowStart": window_start,
             "windowEnd": window_end,
