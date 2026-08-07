@@ -12,7 +12,7 @@ transport. Installing this plugin installs both.
 ## Install
 
 ```
-claude plugin marketplace add qurore/exactory
+claude plugin marketplace add Exactory/marketplace
 claude plugin install exactory-verifier@exactory-ai
 ```
 
