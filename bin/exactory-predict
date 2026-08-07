@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""exactory-predict: deterministic steps of the exactory verifier.
+
+Two commands:
+  cohort   - fetch a paper's arXiv metadata and freeze the cohort definition
+  compose  - turn a stated prediction into a valid review payload
+
+The model decides the numbers. This tool does the arithmetic and the JSON, so the
+payload cannot drift from the contract by hand-editing.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+
+_ARXIV_API_URL = "http://export.arxiv.org/api/query"
+_TIMEOUT_SECONDS = 30
+
+# v1 provisional measurement ages (design 2026-08-06 §5). Frozen into every payload,
+# so a later per-field refinement changes future predictions only.
+_INITIAL_AGE_MONTHS = 12
+_LIFELONG_AGE_MONTHS = 60
+
+# The verifier's own floor: a sigma below this states a certainty about citation
+# futures that no evidence supports.
+_SIGMA_FLOOR = 0.3
+_SIGMA_CEILING = 10.0
+_LOGIT_BOUND = 10.0
+_DELTA_BOUND = 20.0
+
+_ATOM_NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+
+
+def _exit_with_error(message: str, code: int = 1) -> None:
+    print(message, file=sys.stderr)
+    sys.exit(code)
+
+
+def _compute_quarter_window(published: str) -> tuple[str, str]:
+    """Map an ISO date to its calendar quarter: the v1 cohort time window."""
+    year, month = int(published[0:4]), int(published[5:7])
+    quarter_start_month = 3 * ((month - 1) // 3) + 1
+    last_days = {1: "03-31", 4: "06-30", 7: "09-30", 10: "12-31"}
+    return (
+        f"{year}-{quarter_start_month:02d}-01",
+        f"{year}-{last_days[quarter_start_month]}",
+    )
+
+
+def _run_cohort(args: argparse.Namespace) -> None:
+    query = urllib.parse.urlencode({"id_list": args.arxiv_id})
+    request = urllib.request.Request(
+        f"{_ARXIV_API_URL}?{query}", headers={"User-Agent": "exactory-verifier/0.2.0"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+            feed = ET.parse(response)
+    except OSError as error:
+        _exit_with_error(f"The client could not reach the arXiv API. Cause: {error}")
+
+    entry = feed.find("atom:entry", _ATOM_NS)
+    category = None if entry is None else entry.find("arxiv:primary_category", _ATOM_NS)
+    published = None if entry is None else entry.findtext("atom:published", None, _ATOM_NS)
+    if entry is None or category is None or published is None:
+        _exit_with_error(f"The arXiv API returned no usable entry for id {args.arxiv_id}.")
+
+    window_start, window_end = _compute_quarter_window(published)
+    json.dump(
+        {
+            "primaryCategory": category.get("term"),
+            "windowStart": window_start,
+            "windowEnd": window_end,
+            "initialAgeMonths": _INITIAL_AGE_MONTHS,
+            "lifelongAgeMonths": _LIFELONG_AGE_MONTHS,
+        },
+        sys.stdout,
+        indent=2,
+    )
+    print()
+
+
+def _convert_percentile_to_logit(percentile: float) -> float:
+    if not 0.0 < percentile < 1.0:
+        _exit_with_error(
+            f"The percentile must be between 0 and 1, exclusive. Got {percentile}."
+        )
+    logit = math.log(percentile / (1.0 - percentile))
+    if abs(logit) > _LOGIT_BOUND:
+        _exit_with_error(
+            f"The percentile {percentile} is outside the representable range."
+        )
+    return round(logit, 4)
+
+
+def _require_sigma_in_range(name: str, sigma: float) -> None:
+    if sigma < _SIGMA_FLOOR:
+        _exit_with_error(
+            f"{name} is {sigma}, below the floor of {_SIGMA_FLOOR}. A narrower"
+            " distribution states a certainty the evidence cannot support. Widen it."
+        )
+    if sigma > _SIGMA_CEILING:
+        _exit_with_error(f"{name} is {sigma}, above the ceiling of {_SIGMA_CEILING}.")
+
+
+def _run_compose(args: argparse.Namespace) -> None:
+    try:
+        with open(args.cohort_file, encoding="utf-8") as handle:
+            cohort = json.load(handle)
+    except FileNotFoundError:
+        _exit_with_error(f"The file {args.cohort_file} does not exist. Run cohort first.")
+    except json.JSONDecodeError as error:
+        _exit_with_error(f"The file {args.cohort_file} is not valid JSON. Cause: {error}")
+
+    try:
+        with open(args.rationale_file, encoding="utf-8") as handle:
+            rationale = handle.read().strip()
+    except FileNotFoundError:
+        _exit_with_error(f"The file {args.rationale_file} does not exist.")
+    if rationale == "":
+        _exit_with_error("The rationale file is empty. State the evidence behind the numbers.")
+
+    _require_sigma_in_range("--initial-sigma", args.initial_sigma)
+    _require_sigma_in_range("--delta-sigma", args.delta_sigma)
+    if abs(args.delta) > _DELTA_BOUND:
+        _exit_with_error(f"--delta is {args.delta}, outside ±{_DELTA_BOUND}.")
+
+    review = {
+        "claims": [
+            {
+                "claimType": "impact_prediction",
+                "payload": {
+                    "cohort": cohort,
+                    "initial": {
+                        "logitMean": _convert_percentile_to_logit(args.initial_percentile),
+                        "logitSigma": args.initial_sigma,
+                    },
+                    "lifelongDelta": {"mean": args.delta, "sigma": args.delta_sigma},
+                    "rationale": rationale[:8000],
+                },
+            }
+        ]
+    }
+    with open(args.out, "w", encoding="utf-8") as handle:
+        json.dump(review, handle, indent=2)
+    print(f"Wrote {args.out}. Submit it with: exactory submit-review <id> --file {args.out}")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="exactory-predict", description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    cohort = commands.add_parser(
+        "cohort", help="Freeze the cohort definition from arXiv metadata."
+    )
+    cohort.add_argument("--arxiv-id", required=True, help="For example 2301.00001.")
+    cohort.set_defaults(handler=_run_cohort)
+
+    compose = commands.add_parser("compose", help="Build the review payload file.")
+    compose.add_argument("--cohort-file", required=True, help="Output of the cohort command.")
+    compose.add_argument(
+        "--initial-percentile",
+        type=float,
+        required=True,
+        help="Fraction of cohort papers this paper out-cites at the initial age."
+        " 0.90 means top 10%%.",
+    )
+    compose.add_argument("--initial-sigma", type=float, required=True)
+    compose.add_argument(
+        "--delta",
+        type=float,
+        required=True,
+        help="Logit-scale shift from initial to lifelong. Negative means the paper fades.",
+    )
+    compose.add_argument("--delta-sigma", type=float, required=True)
+    compose.add_argument("--rationale-file", required=True)
+    compose.add_argument("--out", default="review.json")
+    compose.set_defaults(handler=_run_compose)
+
+    return parser
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+    args.handler(args)
+
+
+if __name__ == "__main__":
+    main()

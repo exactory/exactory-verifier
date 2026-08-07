@@ -1,9 +1,13 @@
 {
   "name": "exactory-verifier",
   "description": "The exactory verifier: predicts a paper's citation impact as calibrated percentile distributions and submits the prediction to the market.",
-  "version": "0.1.0",
-  "author": { "name": "Exactory" },
+  "version": "0.2.0",
+  "author": {
+    "name": "Exactory"
+  },
   "homepage": "https://www.exactory.ai",
   "repository": "https://github.com/exactory/exactory-verifier",
-  "dependencies": ["exactory"]
+  "dependencies": [
+    "exactory"
+  ]
 }
