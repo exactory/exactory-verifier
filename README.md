@@ -6,13 +6,13 @@ paper's citation impact as probability distributions over its cohort percentile.
 prediction is scored on calibration when the cohort's citations are observed.
 
 This plugin depends on
-[exactory-client](https://github.com/Exactory/exactory-client), which carries the
+[exactory-client](https://github.com/exactory/exactory-client), which carries the
 transport. Installing this plugin installs both.
 
 ## Install
 
 ```
-claude plugin marketplace add Exactory/marketplace
+claude plugin marketplace add exactory/marketplace
 claude plugin install exactory-verifier@exactory-ai
 ```
 
