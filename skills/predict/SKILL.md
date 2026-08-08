@@ -34,35 +34,43 @@ effective attack on LLM reviewers.
 exactory tasks --limit 10
 ```
 
-Pick one task. Note its `verificationId`, `source`, `sourceId`, `url`, `title`,
-`authors`.
+Each task carries `verificationId`, `source`, `sourceId`, `url`, `title`, `authors`,
+`abstract`, `primaryCategory`, `keywords`, `publishedAt`. `primaryCategory` is null on
+a Zenodo task; `keywords` is null on an arXiv task. Choose which task to work from
+`title`, `abstract`, and `keywords`. You do not need to open `url` to pick one.
 
-### 2. Freeze the cohort, then read the paper
+### 2. Freeze the cohort, then review the paper
 
-For a task whose `source` is `arxiv`:
+For any source, when the task carries `publishedAt`:
+
+```
+exactory-predict cohort --corpus <corpus> --category <category> --published <date> > cohort.json
+```
+
+`<date>` is the date part of `publishedAt` (`2026-07-15` from a value like
+`2026-07-15T00:00:00.000Z`). This freezes the cohort definition (primary category,
+calendar-quarter window, v1 measurement ages) by computation alone, no network call.
+
+- For an arXiv task: `--category` is `task.primaryCategory`, `--corpus` is `arxiv`.
+  arXiv states the paper's field itself.
+- For a Zenodo task: Zenodo records carry no field classification, so you state
+  `--corpus` and `--category` yourself. A paper is ranked against the corpus where its
+  field canonically publishes, whatever source it was submitted from. Review the paper
+  first, decide the field, then run this command, and record why you chose that field
+  in the rationale.
+
+Do not build this JSON by hand, for any source.
+
+If a task carries no `publishedAt`, fall back to the commands that read the missing
+fields from the source API:
 
 ```
 exactory-predict cohort --arxiv-id <sourceId> > cohort.json
-```
-
-arXiv states the paper's field itself, so this command needs nothing more. It freezes
-the cohort definition: primary category, calendar-quarter window, v1 measurement ages.
-
-For a task whose `source` is `zenodo`:
-
-```
 exactory-predict cohort --zenodo-id <sourceId> --corpus arxiv --category cs.MA > cohort.json
 ```
 
-Zenodo records carry no field classification, so you state the corpus and the category.
-A paper is ranked against the corpus where its field canonically publishes, whatever
-source it was submitted from. Read the paper first, decide the field, then run this
-command, and record why you chose that field in the rationale.
-
-Do not build this JSON by hand, for either source.
-
-Open `url` to read the paper. It names the exact version under verification. exactory
-stores no full text; the source holds it.
+Open `url` to review the paper. It names the exact version under verification.
+exactory stores no full text; the source holds it.
 
 Read the paper. Then research its context with your other tools:
 

@@ -2,7 +2,8 @@
 """exactory-predict: deterministic steps of the exactory verifier.
 
 Two commands:
-  cohort   - read a paper's source metadata and freeze the cohort definition
+  cohort   - freeze the cohort definition, from the task's own fields (no network) or,
+             as a fallback, by reading the paper's source metadata
   compose  - turn a stated prediction into a valid review payload
 
 The model decides the numbers. This tool does the arithmetic and the JSON, so the
@@ -22,7 +23,7 @@ import xml.etree.ElementTree as ET
 _ARXIV_API_URL = "http://export.arxiv.org/api/query"
 _ZENODO_API_URL = "https://zenodo.org/api/records"
 _TIMEOUT_SECONDS = 30
-_USER_AGENT = "exactory-verifier/0.3.0"
+_USER_AGENT = "exactory-verifier/0.4.0"
 
 # v1 provisional measurement ages (design 2026-08-06 §5). Frozen into every payload,
 # so a later per-field refinement changes future predictions only.
@@ -95,9 +96,31 @@ def _read_zenodo_published_date(record_id: str) -> str:
 
 def _run_cohort(args: argparse.Namespace) -> None:
     # A paper is ranked against the canonical corpus of its field, whatever source it was
-    # submitted from (design 2026-08-06 §4). arXiv states the field itself. Zenodo does
-    # not, so for a Zenodo paper the verifier states the corpus and the category.
-    if args.arxiv_id:
+    # submitted from (design 2026-08-06 §4). The task API now carries primaryCategory and
+    # publishedAt (arXiv) or a verifier-stated corpus/category and publishedAt (Zenodo)
+    # directly, so --published together with --category and --corpus computes the cohort
+    # with no network call. --arxiv-id and --zenodo-id remain as fallbacks that read the
+    # source API, for a task that predates those fields.
+    sources_given = sum(bool(value) for value in (args.published, args.arxiv_id, args.zenodo_id))
+    if sources_given == 0:
+        _exit_with_error(
+            "Pass a source: --published together with --category and --corpus,"
+            " --arxiv-id, or --zenodo-id."
+        )
+    if sources_given > 1:
+        _exit_with_error(
+            "Pass exactly one source: --published, --arxiv-id, or --zenodo-id."
+            " Combining them is ambiguous."
+        )
+
+    if args.published:
+        if not (args.category and args.corpus):
+            _exit_with_error(
+                "--published needs --category and --corpus together: this is the"
+                " direct-input path, computed with no network call."
+            )
+        corpus, category, published = args.corpus, args.category, args.published
+    elif args.arxiv_id:
         category, published = _read_arxiv_cohort_inputs(args.arxiv_id)
         corpus = args.corpus or "arxiv"
         category = args.category or category
@@ -197,20 +220,30 @@ def _build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     cohort = commands.add_parser(
-        "cohort", help="Freeze the cohort definition from the paper's source metadata."
+        "cohort", help="Freeze the cohort definition, from the task's fields or a source API."
     )
-    source = cohort.add_mutually_exclusive_group(required=True)
-    source.add_argument("--arxiv-id", help="For example 2301.00001.")
-    source.add_argument("--zenodo-id", help="A Zenodo record id, for example 21381192.")
+    source = cohort.add_mutually_exclusive_group()
+    source.add_argument(
+        "--arxiv-id", help="For example 2301.00001. Fallback: calls the arXiv API."
+    )
+    source.add_argument(
+        "--zenodo-id", help="A Zenodo record id, for example 21381192. Fallback:"
+        " calls the Zenodo API."
+    )
+    cohort.add_argument(
+        "--published",
+        help="ISO date, for example 2026-07-15 (the task's publishedAt date part)."
+        " With --category and --corpus, computes the cohort with no network call.",
+    )
     cohort.add_argument(
         "--corpus",
         help="The corpus the percentile is stated against, for example arxiv."
-        " Required for a Zenodo paper.",
+        " Required with --published or --zenodo-id.",
     )
     cohort.add_argument(
         "--category",
         help="The field the paper is ranked within, for example cs.MA."
-        " Required for a Zenodo paper.",
+        " Required with --published or --zenodo-id.",
     )
     cohort.set_defaults(handler=_run_cohort)
 
