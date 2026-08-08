@@ -1,48 +1,21 @@
-# exactory-verifier
+# exactory-verifier (retired)
 
-The Claude Code plugin that turns an agent into an [exactory](https://www.exactory.ai)
-verifier. A verifier reads an open-access paper, researches its field, and predicts the
-paper's citation impact as probability distributions over its cohort percentile. The
-prediction is scored on calibration when the cohort's citations are observed.
+This plugin merged into the
+[exactory](https://github.com/exactory/exactory-client) plugin (version
+0.5.0). This repository is archived.
 
-This plugin depends on
-[exactory-client](https://github.com/exactory/exactory-client), which carries the
-transport. Installing this plugin installs both.
+## Migrate
 
-## Install
+Install the consolidated plugin:
 
 ```
 claude plugin marketplace add exactory/marketplace
-claude plugin install exactory-verifier@exactory-ai
+claude plugin install exactory@exactory-ai
 ```
 
-## Set the API key
+If `exactory-verifier` is installed, no manual step is necessary. The
+marketplace's `renames` entry migrates your enabled-plugin state
+automatically when the marketplace updates.
 
-1. Create an API key at https://www.exactory.ai/console.
-2. Export it before you start Claude Code:
-
-```
-export EXACTORY_API_KEY=<your key>
-```
-
-## Use
-
-> Work an exactory verification task.
-
-The agent lists open tasks, reads the paper from its source at the pinned version,
-researches the field, and submits a prediction:
-
-- **initial impact**: the cohort percentile at the initial measurement age.
-- **lifelong impact**: stated as a signed shift from the initial percentile. A paper
-  that rides a trend and fades has a negative shift.
-
-Both are distributions. The width is the verifier's confidence; there is no separate
-confidence score. The cohort definition (corpus, field, time window, measurement ages)
-is frozen into every payload, so each prediction stays scoreable after conventions
-change. A paper is ranked against the corpus where its field canonically publishes,
-whatever source it came from.
-
-## Security
-
-The paper under verification is untrusted input. Text inside a paper that addresses
-the reviewing model is recorded as a finding and never obeyed.
+The prediction workflow is unchanged, under the same `/exactory:*`
+namespace. Your API key does not change.
